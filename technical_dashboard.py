@@ -93,4 +93,4 @@ def normalized(raw, cutoff, start=None):
         invalid = ~np.isfinite(d[column]) | (d[column] <= 0)
         if invalid.any():
             raise ValueError(f'invalid {column} on {d.index[invalid][0].date()}')
-    invalid = ((d.high < d[OHLC].max(axis=1) - 1e-5)
+    invalid = (d.high < d[OHLC].max(axis=1) - 1e-5)
