@@ -1,5 +1,3 @@
-.github/workflows/technical-dashboard.yml
-
 name: Technical Dashboard Test
 
 on:
