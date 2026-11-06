@@ -3,6 +3,9 @@ name: Technical Dashboard Test
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test-calculator:
     runs-on: ubuntu-latest
@@ -14,7 +17,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
@@ -23,14 +26,12 @@ jobs:
 
       - name: Run technical dashboard calculator
         run: |
-          python technical_dashboard.py --output dashboard.csv
+          python technical_dashboard.py --current-open --output "${RUNNER_TEMP}/dashboard/dashboard.csv"
 
       - name: Save diagnostic results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: technical-dashboard-test
-          path: |
-            dashboard.csv
-            dashboard.csv.errors.json
-          if-no-files-found: warn
+          path: ${{ runner.temp }}/dashboard/dashboard.csv.errors.json
+          if-no-files-found: error
