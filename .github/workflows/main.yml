@@ -6,32 +6,107 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: technical-dashboard-pages
+  cancel-in-progress: false
+
 jobs:
-  test-calculator:
+  validate:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
+    outputs:
+      sha256: ${{ steps.stage.outputs.sha256 }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
       - name: Install dependencies
+        run: python -m pip install pandas numpy yfinance requests pandas_market_calendars
+      - name: Run calculator
+        run: python technical_dashboard.py --current-open --output "${RUNNER_TEMP}/dashboard/dashboard.csv"
+      - name: Verify and stage dashboard
+        id: stage
         run: |
-          python -m pip install --upgrade pip
-          pip install pandas numpy yfinance requests pandas_market_calendars
+          python - <<'PY'
+          import datetime as dt
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
 
-      - name: Run technical dashboard calculator
-        run: |
-          python technical_dashboard.py --current-open --output "${RUNNER_TEMP}/dashboard/dashboard.csv"
+          from technical_dashboard import ET, TICKERS, last_completed_session
 
-      - name: Save diagnostic results
+          directory = Path(os.environ["RUNNER_TEMP"]) / "dashboard"
+          content = (directory / "dashboard.json").read_bytes()
+          data = json.loads(content)
+          rows = data["tickers"]
+          latest = str(last_completed_session(dt.datetime.now(ET)))
+          if (
+              data["status"] != "validated"
+              or data["asof"] != latest
+              or len(rows) != len(TICKERS)
+              or {row["ticker"] for row in rows} != set(TICKERS)
+              or any(row["asof"] != latest or row["secondary_sessions_checked"] < 220 for row in rows)
+          ):
+              raise SystemExit("Publication blocked: dashboard is incomplete, unverified, or stale")
+
+          site = directory / "site"
+          site.mkdir()
+          (site / "dashboard.json").write_bytes(content)
+          (site / "index.html").write_text(
+              '<!doctype html><html lang="en"><meta charset="utf-8">'
+              '<title>Technical Dashboard</title><h1>Technical Dashboard</h1>'
+              '<a href="dashboard.json">View validated dashboard JSON</a></html>',
+              encoding="utf-8",
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"sha256={hashlib.sha256(content).hexdigest()}", file=output)
+          print(f"Validated {len(rows)} tickers through {latest}")
+          PY
+      - name: Save diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: technical-dashboard-test
+          name: technical-dashboard-diagnostics
           path: ${{ runner.temp }}/dashboard/dashboard.csv.errors.json
           if-no-files-found: warn
+      - name: Upload validated site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/dashboard/site
+
+  publish:
+    if: github.ref_name == github.event.repository.default_branch
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy validated dashboard
+        id: deployment
+        uses: actions/deploy-pages@v4
+      - name: Verify public JSON matches this run
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          EXPECTED_SHA256: ${{ needs.validate.outputs.sha256 }}
+        run: |
+          url="${PAGE_URL%/}/dashboard.json"
+          result="${RUNNER_TEMP}/published-dashboard.json"
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error --location --max-time 10 \
+              --header 'Cache-Control: no-cache' \
+              --output "$result" "${url}?run=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${attempt}" &&
+              printf '%s  %s\n' "$EXPECTED_SHA256" "$result" | sha256sum --check --status; then
+              printf 'Verified public dashboard: %s\n' "$url"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Public dashboard did not match the validated artifact at $url"
+          exit 1
