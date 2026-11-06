@@ -1,0 +1,38 @@
+.github/workflows/technical-dashboard.yml
+
+name: Technical Dashboard Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-calculator:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy yfinance requests
+
+      - name: Run technical dashboard calculator
+        run: |
+          python technical_dashboard.py --output dashboard.csv
+
+      - name: Save diagnostic results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: technical-dashboard-test
+          path: |
+            dashboard.csv
+            dashboard.csv.errors.json
+          if-no-files-found: warn
