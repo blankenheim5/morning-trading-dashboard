@@ -34,4 +34,4 @@ jobs:
         with:
           name: technical-dashboard-test
           path: ${{ runner.temp }}/dashboard/dashboard.csv.errors.json
-          if-no-files-found: error
+          if-no-files-found: warn
